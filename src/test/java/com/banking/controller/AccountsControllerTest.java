@@ -1,6 +1,8 @@
 package com.banking.controller;
 
 import com.banking.dto.*;
+import com.banking.exception.AccountNotFoundException;
+import com.banking.exception.InsufficientFundsException;
 import com.banking.mapper.AccountMapper;
 import com.banking.model.BankAccount;
 import com.banking.model.Transaction;
@@ -88,12 +90,10 @@ class AccountsControllerTest {
     }
 
     @Test
-    void get_NonExistingAccount_ReturnsNotFound() {
+    void get_NonExistingAccount_ThrowsException() {
         when(accountRepository.findByAccountNumber("NONEXISTENT")).thenReturn(Optional.empty());
 
-        ResponseEntity<AccountDTO> result = controller.get("NONEXISTENT");
-
-        assertEquals(HttpStatus.NOT_FOUND, result.getStatusCode());
+        assertThrows(AccountNotFoundException.class, () -> controller.get("NONEXISTENT"));
     }
 
     @Test
@@ -114,12 +114,11 @@ class AccountsControllerTest {
     }
 
     @Test
-    void deposit_NonExistingAccount_ReturnsNotFound() {
+    void deposit_NonExistingAccount_ThrowsException() {
         when(accountRepository.findByAccountNumber("NONEXISTENT")).thenReturn(Optional.empty());
 
-        ResponseEntity<AccountDTO> result = controller.deposit("NONEXISTENT", new TransactionDTO(new BigDecimal("50")));
-
-        assertEquals(HttpStatus.NOT_FOUND, result.getStatusCode());
+        assertThrows(AccountNotFoundException.class, 
+            () -> controller.deposit("NONEXISTENT", new TransactionDTO(new BigDecimal("50"))));
     }
 
     @Test
@@ -140,13 +139,12 @@ class AccountsControllerTest {
     }
 
     @Test
-    void withdraw_InsufficientFunds_ReturnsBadRequest() {
+    void withdraw_InsufficientFunds_ThrowsException() {
         BankAccount account = new BankAccount("ACC001", new BigDecimal("100"), BigDecimal.ZERO);
         when(accountRepository.findByAccountNumber("ACC001")).thenReturn(Optional.of(account));
 
-        ResponseEntity<AccountDTO> result = controller.withdraw("ACC001", new TransactionDTO(new BigDecimal("150")));
-
-        assertEquals(HttpStatus.BAD_REQUEST, result.getStatusCode());
+        assertThrows(InsufficientFundsException.class, 
+            () -> controller.withdraw("ACC001", new TransactionDTO(new BigDecimal("150"))));
     }
 
     @Test

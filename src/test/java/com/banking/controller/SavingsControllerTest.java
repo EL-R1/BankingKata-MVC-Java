@@ -1,6 +1,9 @@
 package com.banking.controller;
 
 import com.banking.dto.*;
+import com.banking.exception.AccountNotFoundException;
+import com.banking.exception.DepositLimitExceededException;
+import com.banking.exception.InsufficientFundsException;
 import com.banking.mapper.AccountMapper;
 import com.banking.model.SavingsAccount;
 import com.banking.repository.SavingsAccountRepository;
@@ -83,12 +86,10 @@ class SavingsControllerTest {
     }
 
     @Test
-    void get_NonExistingAccount_ReturnsNotFound() {
+    void get_NonExistingAccount_ThrowsException() {
         when(accountRepository.findByAccountNumber("NONEXISTENT")).thenReturn(Optional.empty());
 
-        ResponseEntity<SavingsAccountDTO> result = controller.get("NONEXISTENT");
-
-        assertEquals(HttpStatus.NOT_FOUND, result.getStatusCode());
+        assertThrows(AccountNotFoundException.class, () -> controller.get("NONEXISTENT"));
     }
 
     @Test
@@ -108,13 +109,12 @@ class SavingsControllerTest {
     }
 
     @Test
-    void deposit_ExceedsCeiling_ReturnsBadRequest() {
+    void deposit_ExceedsCeiling_ThrowsException() {
         SavingsAccount account = new SavingsAccount("SAV001", new BigDecimal("100"), new BigDecimal("50"));
         when(accountRepository.findByAccountNumber("SAV001")).thenReturn(Optional.of(account));
 
-        ResponseEntity<SavingsAccountDTO> result = controller.deposit("SAV001", new TransactionDTO(new BigDecimal("60")));
-
-        assertEquals(HttpStatus.BAD_REQUEST, result.getStatusCode());
+        assertThrows(DepositLimitExceededException.class, 
+            () -> controller.deposit("SAV001", new TransactionDTO(new BigDecimal("60"))));
     }
 
     @Test
@@ -134,21 +134,19 @@ class SavingsControllerTest {
     }
 
     @Test
-    void withdraw_InsufficientFunds_ReturnsBadRequest() {
+    void withdraw_InsufficientFunds_ThrowsException() {
         SavingsAccount account = new SavingsAccount("SAV001", new BigDecimal("10000"), new BigDecimal("50"));
         when(accountRepository.findByAccountNumber("SAV001")).thenReturn(Optional.of(account));
 
-        ResponseEntity<SavingsAccountDTO> result = controller.withdraw("SAV001", new TransactionDTO(new BigDecimal("100")));
-
-        assertEquals(HttpStatus.BAD_REQUEST, result.getStatusCode());
+        assertThrows(InsufficientFundsException.class, 
+            () -> controller.withdraw("SAV001", new TransactionDTO(new BigDecimal("100"))));
     }
 
     @Test
-    void deposit_NonExistingAccount_ReturnsNotFound() {
+    void deposit_NonExistingAccount_ThrowsException() {
         when(accountRepository.findByAccountNumber("NONEXISTENT")).thenReturn(Optional.empty());
 
-        ResponseEntity<SavingsAccountDTO> result = controller.deposit("NONEXISTENT", new TransactionDTO(new BigDecimal("50")));
-
-        assertEquals(HttpStatus.NOT_FOUND, result.getStatusCode());
+        assertThrows(AccountNotFoundException.class, 
+            () -> controller.deposit("NONEXISTENT", new TransactionDTO(new BigDecimal("50"))));
     }
 }

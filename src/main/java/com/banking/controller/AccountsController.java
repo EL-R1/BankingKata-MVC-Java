@@ -1,11 +1,18 @@
 package com.banking.controller;
 
 import com.banking.dto.*;
+import com.banking.exception.AccountNotFoundException;
+import com.banking.exception.InsufficientFundsException;
 import com.banking.mapper.AccountMapper;
 import com.banking.model.BankAccount;
 import com.banking.model.Transaction;
 import com.banking.repository.BankAccountRepository;
 import com.banking.repository.TransactionRepository;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -18,8 +25,15 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/accounts")
+@Tag(name = "Current Accounts", description = "API for managing current bank accounts")
 public class AccountsController {
+
     private static final Logger logger = LoggerFactory.getLogger(AccountsController.class);
+
+    private static final String ERROR_ACCOUNT_NOT_FOUND = "Account not found";
+    private static final String ERROR_DUPLICATE_ACCOUNT = "Account number already exists";
+    private static final String ERROR_INVALID_AMOUNT = "Amount must be positive";
+    private static final String ERROR_INSUFFICIENT_FUNDS = "Insufficient funds for withdrawal";
 
     private final BankAccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
@@ -35,164 +49,169 @@ public class AccountsController {
     }
 
     @GetMapping
+    @Operation(summary = "Get all accounts", description = "Retrieves a list of all current accounts")
+    @ApiResponse(responseCode = "200", description = "Accounts retrieved successfully")
     public ResponseEntity<List<AccountDTO>> getAll() {
+        logger.info("Fetching all accounts");
         return ResponseEntity.ok(accountRepository.findAll().stream()
                 .map(accountMapper::toAccountDTO)
                 .toList());
     }
 
     @GetMapping("/{accountNumber}")
-    public ResponseEntity<AccountDTO> get(@PathVariable String accountNumber) {
+    @Operation(summary = "Get account by number", description = "Retrieves a specific account by its account number")
+    @ApiResponse(responseCode = "200", description = "Account found")
+    @ApiResponse(responseCode = "404", description = "Account not found")
+    public ResponseEntity<AccountDTO> get(
+            @Parameter(description = "Account number", required = true)
+            @PathVariable String accountNumber) {
+        logger.info("Fetching account: {}", accountNumber);
         return accountRepository.findByAccountNumber(accountNumber)
                 .map(account -> ResponseEntity.ok(accountMapper.toAccountDTO(account)))
                 .orElseGet(() -> {
                     logger.warn("Account not found: {}", accountNumber);
-                    return ResponseEntity.notFound().build();
+                    throw new AccountNotFoundException(accountNumber);
                 });
     }
 
     @PostMapping
-    public ResponseEntity<AccountDTO> create(@RequestBody CreateAccountDTO model) {
-        try {
-            if (accountRepository.exists(model.accountNumber())) {
-                logger.warn("Duplicate account creation attempted: {}", model.accountNumber());
-                return ResponseEntity.status(HttpStatus.CONFLICT).build();
-            }
-
-            var account = new BankAccount(
-                    model.accountNumber(),
-                    model.initialBalance(),
-                    model.overdraftLimit()
-            );
-            accountRepository.save(account);
-
-            logger.info("Account created: {} with initial balance: {}",
-                    account.getAccountNumber(), account.getBalance());
-
-            return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(accountMapper.toAccountDTO(account));
-        } catch (IllegalArgumentException ex) {
-            logger.error("Invalid account creation request", ex);
-            return ResponseEntity.badRequest().build();
+    @Operation(summary = "Create a new account", description = "Creates a new current bank account")
+    @ApiResponse(responseCode = "201", description = "Account created successfully")
+    @ApiResponse(responseCode = "400", description = "Invalid request data")
+    @ApiResponse(responseCode = "409", description = "Account number already exists")
+    public ResponseEntity<AccountDTO> create(@Valid @RequestBody CreateAccountDTO model) {
+        if (accountRepository.exists(model.accountNumber())) {
+            logger.warn("Duplicate account creation attempted: {}", model.accountNumber());
+            return ResponseEntity.status(HttpStatus.CONFLICT).build();
         }
+
+        var account = new BankAccount(
+                model.accountNumber(),
+                model.initialBalance(),
+                model.overdraftLimit()
+        );
+        accountRepository.save(account);
+
+        logger.info("Account created: {} with initial balance: {}",
+                account.getAccountNumber(), account.getBalance());
+
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(accountMapper.toAccountDTO(account));
     }
 
     @PostMapping("/{accountNumber}/deposit")
-    public ResponseEntity<AccountDTO> deposit(@PathVariable String accountNumber, @RequestBody TransactionDTO model) {
-        try {
-            var account = accountRepository.findByAccountNumber(accountNumber)
-                    .orElseThrow(() -> new IllegalStateException("Account " + accountNumber + " not found"));
+    @Operation(summary = "Deposit money", description = "Deposits money into a current account")
+    @ApiResponse(responseCode = "200", description = "Deposit successful")
+    @ApiResponse(responseCode = "400", description = "Invalid amount")
+    @ApiResponse(responseCode = "404", description = "Account not found")
+    public ResponseEntity<AccountDTO> deposit(
+            @Parameter(description = "Account number", required = true)
+            @PathVariable String accountNumber,
+            @Valid @RequestBody TransactionDTO model) {
+        logger.info("Processing deposit for account: {}, amount: {}", accountNumber, model.amount());
 
-            account.deposit(model.amount());
-            accountRepository.update(account);
+        var account = accountRepository.findByAccountNumber(accountNumber)
+                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
 
-            var transaction = new Transaction(
-                    accountNumber,
-                    model.amount(),
-                    Transaction.TransactionType.DEPOSIT,
-                    account.getBalance()
-            );
-            transactionRepository.save(transaction);
+        account.deposit(model.amount());
+        accountRepository.update(account);
 
-            logger.info("Deposit successful: {} - {} -> New balance: {}",
-                    accountNumber, model.amount(), account.getBalance());
+        var transaction = new Transaction(
+                accountNumber,
+                model.amount(),
+                Transaction.TransactionType.DEPOSIT,
+                account.getBalance()
+        );
+        transactionRepository.save(transaction);
 
-            return ResponseEntity.ok(accountMapper.toAccountDTO(account));
-        } catch (IllegalStateException ex) {
-            if (ex.getMessage().contains("not found")) {
-                logger.warn("Deposit failed - account not found: {}", accountNumber);
-                return ResponseEntity.notFound().build();
-            }
-            logger.warn("Deposit failed - invalid amount: {}", accountNumber, ex);
-            return ResponseEntity.badRequest().build();
-        } catch (IllegalArgumentException ex) {
-            logger.warn("Deposit failed - invalid amount: {}", accountNumber, ex);
-            return ResponseEntity.badRequest().build();
-        }
+        logger.info("Deposit successful - Account: {}, New balance: {}", accountNumber, account.getBalance());
+
+        return ResponseEntity.ok(accountMapper.toAccountDTO(account));
     }
 
     @PostMapping("/{accountNumber}/withdraw")
-    public ResponseEntity<AccountDTO> withdraw(@PathVariable String accountNumber, @RequestBody TransactionDTO model) {
-        try {
-            var account = accountRepository.findByAccountNumber(accountNumber)
-                    .orElseThrow(() -> new IllegalStateException("Account " + accountNumber + " not found"));
+    @Operation(summary = "Withdraw money", description = "Withdraws money from a current account")
+    @ApiResponse(responseCode = "200", description = "Withdrawal successful")
+    @ApiResponse(responseCode = "400", description = "Invalid amount or insufficient funds")
+    @ApiResponse(responseCode = "404", description = "Account not found")
+    public ResponseEntity<AccountDTO> withdraw(
+            @Parameter(description = "Account number", required = true)
+            @PathVariable String accountNumber,
+            @Valid @RequestBody TransactionDTO model) {
+        logger.info("Processing withdrawal for account: {}, amount: {}", accountNumber, model.amount());
 
-            account.withdraw(model.amount());
-            accountRepository.update(account);
+        var account = accountRepository.findByAccountNumber(accountNumber)
+                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
 
-            var transaction = new Transaction(
-                    accountNumber,
-                    model.amount(),
-                    Transaction.TransactionType.WITHDRAWAL,
-                    account.getBalance()
-            );
-            transactionRepository.save(transaction);
-
-            logger.info("Withdrawal successful: {} - {} -> New balance: {}",
-                    accountNumber, model.amount(), account.getBalance());
-
-            return ResponseEntity.ok(accountMapper.toAccountDTO(account));
-        } catch (IllegalStateException ex) {
-            if (ex.getMessage().contains("Insufficient funds")) {
-                logger.warn("Insufficient funds: {} - attempted: {}", accountNumber, model.amount());
-                return ResponseEntity.badRequest().build();
-            }
-            if (ex.getMessage().contains("not found")) {
-                logger.warn("Withdrawal failed - account not found: {}", accountNumber);
-                return ResponseEntity.notFound().build();
-            }
-            return ResponseEntity.badRequest().build();
-        } catch (IllegalArgumentException ex) {
-            logger.warn("Withdrawal failed - invalid amount: {}", accountNumber, ex);
-            return ResponseEntity.badRequest().build();
+        if (model.amount().compareTo(account.getBalance().add(account.getOverdraftLimit())) > 0) {
+            throw new InsufficientFundsException(ERROR_INSUFFICIENT_FUNDS);
         }
+
+        account.withdraw(model.amount());
+        accountRepository.update(account);
+
+        var transaction = new Transaction(
+                accountNumber,
+                model.amount(),
+                Transaction.TransactionType.WITHDRAWAL,
+                account.getBalance()
+        );
+        transactionRepository.save(transaction);
+
+        logger.info("Withdrawal successful - Account: {}, New balance: {}", accountNumber, account.getBalance());
+
+        return ResponseEntity.ok(accountMapper.toAccountDTO(account));
     }
 
     @PostMapping("/{accountNumber}/overdraft")
-    public ResponseEntity<AccountDTO> setOverdraft(@PathVariable String accountNumber, @RequestBody OverdraftDTO model) {
-        try {
-            var account = accountRepository.findByAccountNumber(accountNumber)
-                    .orElseThrow(() -> new IllegalStateException("Account " + accountNumber + " not found"));
+    @Operation(summary = "Set overdraft limit", description = "Sets or updates the overdraft limit for an account")
+    @ApiResponse(responseCode = "200", description = "Overdraft limit updated")
+    @ApiResponse(responseCode = "400", description = "Invalid overdraft limit")
+    @ApiResponse(responseCode = "404", description = "Account not found")
+    public ResponseEntity<AccountDTO> setOverdraft(
+            @Parameter(description = "Account number", required = true)
+            @PathVariable String accountNumber,
+            @Valid @RequestBody OverdraftDTO model) {
+        logger.info("Setting overdraft limit for account: {}, limit: {}", accountNumber, model.overdraftLimit());
 
-            account.setOverdraftLimit(model.overdraftLimit());
-            accountRepository.update(account);
+        var account = accountRepository.findByAccountNumber(accountNumber)
+                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
 
-            logger.info("Overdraft limit updated: {} -> {}", accountNumber, model.overdraftLimit());
+        account.setOverdraftLimit(model.overdraftLimit());
+        accountRepository.update(account);
 
-            return ResponseEntity.ok(accountMapper.toAccountDTO(account));
-        } catch (IllegalStateException ex) {
-            logger.warn("Set overdraft failed - account not found: {}", accountNumber);
-            return ResponseEntity.notFound().build();
-        } catch (IllegalArgumentException ex) {
-            logger.warn("Set overdraft failed - invalid limit: {}", accountNumber, ex);
-            return ResponseEntity.badRequest().build();
-        }
+        logger.info("Overdraft limit updated for account: {}", accountNumber);
+
+        return ResponseEntity.ok(accountMapper.toAccountDTO(account));
     }
 
     @GetMapping("/{accountNumber}/statement")
+    @Operation(summary = "Get account statement", description = "Retrieves the transaction statement for an account")
+    @ApiResponse(responseCode = "200", description = "Statement retrieved successfully")
+    @ApiResponse(responseCode = "404", description = "Account not found")
     public ResponseEntity<StatementDTO> getStatement(
+            @Parameter(description = "Account number", required = true)
             @PathVariable String accountNumber,
+            @Parameter(description = "Start date for the statement")
             @RequestParam(required = false) Instant fromDate,
+            @Parameter(description = "End date for the statement")
             @RequestParam(required = false) Instant toDate) {
-        try {
-            var account = accountRepository.findByAccountNumber(accountNumber)
-                    .orElseThrow(() -> new IllegalStateException("Account " + accountNumber + " not found"));
+        logger.info("Fetching statement for account: {}", accountNumber);
 
-            Instant to = toDate != null ? toDate : Instant.now();
-            Instant from = fromDate != null ? fromDate : to.minus(30, ChronoUnit.DAYS);
+        var account = accountRepository.findByAccountNumber(accountNumber)
+                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
 
-            var transactions = transactionRepository.findByAccountNumberInRange(accountNumber, from, to);
+        Instant to = toDate != null ? toDate : Instant.now();
+        Instant from = fromDate != null ? fromDate : to.minus(30, ChronoUnit.DAYS);
 
-            return ResponseEntity.ok(new StatementDTO(
-                    account.getAccountNumber(),
-                    "Compte Courant",
-                    account.getBalance(),
-                    to,
-                    accountMapper.toOperationDTOList(transactions)
-            ));
-        } catch (IllegalStateException ex) {
-            logger.warn("Statement failed - account not found: {}", accountNumber);
-            return ResponseEntity.notFound().build();
-        }
+        var transactions = transactionRepository.findByAccountNumberInRange(accountNumber, from, to);
+
+        return ResponseEntity.ok(new StatementDTO(
+                account.getAccountNumber(),
+                "Current Account",
+                account.getBalance(),
+                to,
+                accountMapper.toOperationDTOList(transactions)
+        ));
     }
 }
