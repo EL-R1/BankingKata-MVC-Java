@@ -6,7 +6,7 @@ import com.banking.exception.DepositLimitExceededException;
 import com.banking.exception.InsufficientFundsException;
 import com.banking.mapper.AccountMapper;
 import com.banking.model.SavingsAccount;
-import com.banking.repository.SavingsAccountRepository;
+import com.banking.service.SavingsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,7 +27,7 @@ import static org.mockito.Mockito.*;
 class SavingsControllerTest {
 
     @Mock
-    private SavingsAccountRepository accountRepository;
+    private SavingsService savingsService;
 
     @Mock
     private AccountMapper accountMapper;
@@ -36,12 +36,12 @@ class SavingsControllerTest {
 
     @BeforeEach
     void setUp() {
-        controller = new SavingsController(accountRepository, accountMapper);
+        controller = new SavingsController(savingsService, accountMapper);
     }
 
     @Test
     void getAll_ReturnsEmptyList_WhenNoAccounts() {
-        when(accountRepository.findAll()).thenReturn(List.of());
+        when(savingsService.findAll()).thenReturn(List.of());
 
         ResponseEntity<List<SavingsAccountDTO>> result = controller.getAll();
 
@@ -52,8 +52,8 @@ class SavingsControllerTest {
     @Test
     void create_ValidSavingsAccount_ReturnsCreated() {
         CreateSavingsAccountDTO model = new CreateSavingsAccountDTO("SAV001", new BigDecimal("10000"), new BigDecimal("500"));
-        when(accountRepository.exists("SAV001")).thenReturn(false);
-        doNothing().when(accountRepository).save(any(SavingsAccount.class));
+        SavingsAccount account = new SavingsAccount("SAV001", new BigDecimal("10000"), new BigDecimal("500"));
+        when(savingsService.createSavingsAccount(anyString(), any(BigDecimal.class), any(BigDecimal.class))).thenReturn(account);
         when(accountMapper.toSavingsAccountDTO(any(SavingsAccount.class))).thenReturn(new SavingsAccountDTO("SAV001", new BigDecimal("500"), new BigDecimal("10000")));
 
         ResponseEntity<SavingsAccountDTO> result = controller.create(model);
@@ -66,7 +66,8 @@ class SavingsControllerTest {
     @Test
     void create_DuplicateAccount_ReturnsConflict() {
         CreateSavingsAccountDTO model = new CreateSavingsAccountDTO("SAV001", new BigDecimal("10000"), BigDecimal.ZERO);
-        when(accountRepository.exists("SAV001")).thenReturn(true);
+        when(savingsService.createSavingsAccount(anyString(), any(BigDecimal.class), any(BigDecimal.class)))
+                .thenThrow(new IllegalStateException("Account number already exists: SAV001"));
 
         ResponseEntity<SavingsAccountDTO> result = controller.create(model);
 
@@ -76,7 +77,7 @@ class SavingsControllerTest {
     @Test
     void get_ExistingAccount_ReturnsAccount() {
         SavingsAccount account = new SavingsAccount("SAV001", new BigDecimal("10000"), new BigDecimal("500"));
-        when(accountRepository.findByAccountNumber("SAV001")).thenReturn(Optional.of(account));
+        when(savingsService.findAccount("SAV001")).thenReturn(account);
         when(accountMapper.toSavingsAccountDTO(account)).thenReturn(new SavingsAccountDTO("SAV001", new BigDecimal("500"), new BigDecimal("10000")));
 
         ResponseEntity<SavingsAccountDTO> result = controller.get("SAV001");
@@ -87,20 +88,16 @@ class SavingsControllerTest {
 
     @Test
     void get_NonExistingAccount_ThrowsException() {
-        when(accountRepository.findByAccountNumber("NONEXISTENT")).thenReturn(Optional.empty());
+        when(savingsService.findAccount("NONEXISTENT")).thenThrow(new AccountNotFoundException("Savings account not found: NONEXISTENT"));
 
         assertThrows(AccountNotFoundException.class, () -> controller.get("NONEXISTENT"));
     }
 
     @Test
     void deposit_ValidAmount_IncreasesBalance() {
-        SavingsAccount account = new SavingsAccount("SAV001", new BigDecimal("10000"), new BigDecimal("100"));
-        when(accountRepository.findByAccountNumber("SAV001")).thenReturn(Optional.of(account));
-        doNothing().when(accountRepository).update(any());
-        when(accountMapper.toSavingsAccountDTO(any())).thenAnswer(inv -> {
-            SavingsAccount acc = inv.getArgument(0);
-            return new SavingsAccountDTO(acc.getAccountNumber(), acc.getBalance(), acc.getDepositCeiling());
-        });
+        SavingsAccount account = new SavingsAccount("SAV001", new BigDecimal("150"), BigDecimal.ZERO);
+        when(savingsService.deposit("SAV001", new BigDecimal("50"))).thenReturn(account);
+        when(accountMapper.toSavingsAccountDTO(account)).thenReturn(new SavingsAccountDTO("SAV001", new BigDecimal("150"), BigDecimal.ZERO));
 
         ResponseEntity<SavingsAccountDTO> result = controller.deposit("SAV001", new TransactionDTO(new BigDecimal("50")));
 
@@ -110,22 +107,17 @@ class SavingsControllerTest {
 
     @Test
     void deposit_ExceedsCeiling_ThrowsException() {
-        SavingsAccount account = new SavingsAccount("SAV001", new BigDecimal("100"), new BigDecimal("50"));
-        when(accountRepository.findByAccountNumber("SAV001")).thenReturn(Optional.of(account));
+        when(savingsService.deposit("SAV001", new BigDecimal("60"))).thenThrow(new DepositLimitExceededException("Deposit would exceed the ceiling of 100"));
 
         assertThrows(DepositLimitExceededException.class, 
-            () -> controller.deposit("SAV001", new TransactionDTO(new BigDecimal("60"))));
+                () -> controller.deposit("SAV001", new TransactionDTO(new BigDecimal("60"))));
     }
 
     @Test
     void withdraw_ValidAmount_DecreasesBalance() {
-        SavingsAccount account = new SavingsAccount("SAV001", new BigDecimal("10000"), new BigDecimal("100"));
-        when(accountRepository.findByAccountNumber("SAV001")).thenReturn(Optional.of(account));
-        doNothing().when(accountRepository).update(any());
-        when(accountMapper.toSavingsAccountDTO(any())).thenAnswer(inv -> {
-            SavingsAccount acc = inv.getArgument(0);
-            return new SavingsAccountDTO(acc.getAccountNumber(), acc.getBalance(), acc.getDepositCeiling());
-        });
+        SavingsAccount account = new SavingsAccount("SAV001", new BigDecimal("70"), BigDecimal.ZERO);
+        when(savingsService.withdraw("SAV001", new BigDecimal("30"))).thenReturn(account);
+        when(accountMapper.toSavingsAccountDTO(account)).thenReturn(new SavingsAccountDTO("SAV001", new BigDecimal("70"), BigDecimal.ZERO));
 
         ResponseEntity<SavingsAccountDTO> result = controller.withdraw("SAV001", new TransactionDTO(new BigDecimal("30")));
 
@@ -135,18 +127,17 @@ class SavingsControllerTest {
 
     @Test
     void withdraw_InsufficientFunds_ThrowsException() {
-        SavingsAccount account = new SavingsAccount("SAV001", new BigDecimal("10000"), new BigDecimal("50"));
-        when(accountRepository.findByAccountNumber("SAV001")).thenReturn(Optional.of(account));
+        when(savingsService.withdraw("SAV001", new BigDecimal("100"))).thenThrow(new InsufficientFundsException("Insufficient funds for withdrawal"));
 
         assertThrows(InsufficientFundsException.class, 
-            () -> controller.withdraw("SAV001", new TransactionDTO(new BigDecimal("100"))));
+                () -> controller.withdraw("SAV001", new TransactionDTO(new BigDecimal("100"))));
     }
 
     @Test
     void deposit_NonExistingAccount_ThrowsException() {
-        when(accountRepository.findByAccountNumber("NONEXISTENT")).thenReturn(Optional.empty());
+        when(savingsService.deposit("NONEXISTENT", new BigDecimal("50"))).thenThrow(new AccountNotFoundException("Savings account not found: NONEXISTENT"));
 
         assertThrows(AccountNotFoundException.class, 
-            () -> controller.deposit("NONEXISTENT", new TransactionDTO(new BigDecimal("50"))));
+                () -> controller.deposit("NONEXISTENT", new TransactionDTO(new BigDecimal("50"))));
     }
 }

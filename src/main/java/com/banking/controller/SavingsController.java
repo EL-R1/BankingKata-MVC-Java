@@ -6,7 +6,7 @@ import com.banking.exception.DepositLimitExceededException;
 import com.banking.exception.InsufficientFundsException;
 import com.banking.mapper.AccountMapper;
 import com.banking.model.SavingsAccount;
-import com.banking.repository.SavingsAccountRepository;
+import com.banking.service.SavingsService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -28,17 +28,11 @@ public class SavingsController {
 
     private static final Logger logger = LoggerFactory.getLogger(SavingsController.class);
 
-    private static final String ERROR_ACCOUNT_NOT_FOUND = "Savings account not found";
-    private static final String ERROR_DUPLICATE_ACCOUNT = "Account number already exists";
-    private static final String ERROR_INVALID_AMOUNT = "Amount must be positive";
-    private static final String ERROR_INSUFFICIENT_FUNDS = "Insufficient funds for withdrawal";
-    private static final String ERROR_DEPOSIT_LIMIT_EXCEEDED = "Deposit would exceed the ceiling";
-
-    private final SavingsAccountRepository accountRepository;
+    private final SavingsService savingsService;
     private final AccountMapper accountMapper;
 
-    public SavingsController(SavingsAccountRepository accountRepository, AccountMapper accountMapper) {
-        this.accountRepository = accountRepository;
+    public SavingsController(SavingsService savingsService, AccountMapper accountMapper) {
+        this.savingsService = savingsService;
         this.accountMapper = accountMapper;
     }
 
@@ -47,7 +41,7 @@ public class SavingsController {
     @ApiResponse(responseCode = "200", description = "Accounts retrieved successfully")
     public ResponseEntity<List<SavingsAccountDTO>> getAll() {
         logger.info("Fetching all savings accounts");
-        return ResponseEntity.ok(accountRepository.findAll().stream()
+        return ResponseEntity.ok(savingsService.findAll().stream()
                 .map(accountMapper::toSavingsAccountDTO)
                 .toList());
     }
@@ -60,12 +54,8 @@ public class SavingsController {
             @Parameter(description = "Account number", required = true)
             @PathVariable String accountNumber) {
         logger.info("Fetching savings account: {}", accountNumber);
-        return accountRepository.findByAccountNumber(accountNumber)
-                .map(account -> ResponseEntity.ok(accountMapper.toSavingsAccountDTO(account)))
-                .orElseGet(() -> {
-                    logger.warn("Savings account not found: {}", accountNumber);
-                    throw new AccountNotFoundException(accountNumber);
-                });
+        var account = savingsService.findAccount(accountNumber);
+        return ResponseEntity.ok(accountMapper.toSavingsAccountDTO(account));
     }
 
     @PostMapping
@@ -74,23 +64,22 @@ public class SavingsController {
     @ApiResponse(responseCode = "400", description = "Invalid request data")
     @ApiResponse(responseCode = "409", description = "Account number already exists")
     public ResponseEntity<SavingsAccountDTO> create(@Valid @RequestBody CreateSavingsAccountDTO model) {
-        if (accountRepository.exists(model.accountNumber())) {
+        try {
+            var account = savingsService.createSavingsAccount(
+                    model.accountNumber(),
+                    model.depositCeiling(),
+                    model.initialBalance()
+            );
+
+            logger.info("Savings account created: {} with initial balance: {}",
+                    account.getAccountNumber(), account.getBalance());
+
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .body(accountMapper.toSavingsAccountDTO(account));
+        } catch (IllegalStateException ex) {
             logger.warn("Duplicate savings account creation attempted: {}", model.accountNumber());
             return ResponseEntity.status(HttpStatus.CONFLICT).build();
         }
-
-        var account = new SavingsAccount(
-                model.accountNumber(),
-                model.depositCeiling(),
-                model.initialBalance()
-        );
-        accountRepository.save(account);
-
-        logger.info("Savings account created: {} with initial balance: {}",
-                account.getAccountNumber(), account.getBalance());
-
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(accountMapper.toSavingsAccountDTO(account));
     }
 
     @PostMapping("/{accountNumber}/deposit")
@@ -104,19 +93,7 @@ public class SavingsController {
             @Valid @RequestBody TransactionDTO model) {
         logger.info("Processing savings deposit for account: {}, amount: {}", accountNumber, model.amount());
 
-        var account = accountRepository.findByAccountNumber(accountNumber)
-                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
-
-        BigDecimal newBalance = account.getBalance().add(model.amount());
-        if (newBalance.compareTo(account.getDepositCeiling()) > 0) {
-            throw new DepositLimitExceededException(
-                    "Deposit would exceed the ceiling of " + account.getDepositCeiling());
-        }
-
-        account.deposit(model.amount());
-        accountRepository.update(account);
-
-        logger.info("Savings deposit successful - Account: {}, New balance: {}", accountNumber, account.getBalance());
+        var account = savingsService.deposit(accountNumber, model.amount());
 
         return ResponseEntity.ok(accountMapper.toSavingsAccountDTO(account));
     }
@@ -132,17 +109,7 @@ public class SavingsController {
             @Valid @RequestBody TransactionDTO model) {
         logger.info("Processing savings withdrawal for account: {}, amount: {}", accountNumber, model.amount());
 
-        var account = accountRepository.findByAccountNumber(accountNumber)
-                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
-
-        if (model.amount().compareTo(account.getBalance()) > 0) {
-            throw new InsufficientFundsException(ERROR_INSUFFICIENT_FUNDS);
-        }
-
-        account.withdraw(model.amount());
-        accountRepository.update(account);
-
-        logger.info("Savings withdrawal successful - Account: {}, New balance: {}", accountNumber, account.getBalance());
+        var account = savingsService.withdraw(accountNumber, model.amount());
 
         return ResponseEntity.ok(accountMapper.toSavingsAccountDTO(account));
     }

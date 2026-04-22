@@ -6,8 +6,8 @@ import com.banking.exception.InsufficientFundsException;
 import com.banking.mapper.AccountMapper;
 import com.banking.model.BankAccount;
 import com.banking.model.Transaction;
-import com.banking.repository.BankAccountRepository;
 import com.banking.repository.TransactionRepository;
+import com.banking.service.AccountService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -30,20 +30,14 @@ public class AccountsController {
 
     private static final Logger logger = LoggerFactory.getLogger(AccountsController.class);
 
-    private static final String ERROR_ACCOUNT_NOT_FOUND = "Account not found";
-    private static final String ERROR_DUPLICATE_ACCOUNT = "Account number already exists";
-    private static final String ERROR_INVALID_AMOUNT = "Amount must be positive";
-    private static final String ERROR_INSUFFICIENT_FUNDS = "Insufficient funds for withdrawal";
-
-    private final BankAccountRepository accountRepository;
+    private final AccountService accountService;
     private final TransactionRepository transactionRepository;
     private final AccountMapper accountMapper;
 
-    public AccountsController(
-            BankAccountRepository accountRepository,
-            TransactionRepository transactionRepository,
-            AccountMapper accountMapper) {
-        this.accountRepository = accountRepository;
+    public AccountsController(AccountService accountService,
+                              TransactionRepository transactionRepository,
+                              AccountMapper accountMapper) {
+        this.accountService = accountService;
         this.transactionRepository = transactionRepository;
         this.accountMapper = accountMapper;
     }
@@ -53,7 +47,7 @@ public class AccountsController {
     @ApiResponse(responseCode = "200", description = "Accounts retrieved successfully")
     public ResponseEntity<List<AccountDTO>> getAll() {
         logger.info("Fetching all accounts");
-        return ResponseEntity.ok(accountRepository.findAll().stream()
+        return ResponseEntity.ok(accountService.findAll().stream()
                 .map(accountMapper::toAccountDTO)
                 .toList());
     }
@@ -66,12 +60,8 @@ public class AccountsController {
             @Parameter(description = "Account number", required = true)
             @PathVariable String accountNumber) {
         logger.info("Fetching account: {}", accountNumber);
-        return accountRepository.findByAccountNumber(accountNumber)
-                .map(account -> ResponseEntity.ok(accountMapper.toAccountDTO(account)))
-                .orElseGet(() -> {
-                    logger.warn("Account not found: {}", accountNumber);
-                    throw new AccountNotFoundException(accountNumber);
-                });
+        var account = accountService.findAccount(accountNumber);
+        return ResponseEntity.ok(accountMapper.toAccountDTO(account));
     }
 
     @PostMapping
@@ -80,23 +70,22 @@ public class AccountsController {
     @ApiResponse(responseCode = "400", description = "Invalid request data")
     @ApiResponse(responseCode = "409", description = "Account number already exists")
     public ResponseEntity<AccountDTO> create(@Valid @RequestBody CreateAccountDTO model) {
-        if (accountRepository.exists(model.accountNumber())) {
+        try {
+            var account = accountService.createAccount(
+                    model.accountNumber(),
+                    model.initialBalance(),
+                    model.overdraftLimit()
+            );
+
+            logger.info("Account created: {} with initial balance: {}",
+                    account.getAccountNumber(), account.getBalance());
+
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .body(accountMapper.toAccountDTO(account));
+        } catch (IllegalStateException ex) {
             logger.warn("Duplicate account creation attempted: {}", model.accountNumber());
             return ResponseEntity.status(HttpStatus.CONFLICT).build();
         }
-
-        var account = new BankAccount(
-                model.accountNumber(),
-                model.initialBalance(),
-                model.overdraftLimit()
-        );
-        accountRepository.save(account);
-
-        logger.info("Account created: {} with initial balance: {}",
-                account.getAccountNumber(), account.getBalance());
-
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(accountMapper.toAccountDTO(account));
     }
 
     @PostMapping("/{accountNumber}/deposit")
@@ -110,21 +99,7 @@ public class AccountsController {
             @Valid @RequestBody TransactionDTO model) {
         logger.info("Processing deposit for account: {}, amount: {}", accountNumber, model.amount());
 
-        var account = accountRepository.findByAccountNumber(accountNumber)
-                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
-
-        account.deposit(model.amount());
-        accountRepository.update(account);
-
-        var transaction = new Transaction(
-                accountNumber,
-                model.amount(),
-                Transaction.TransactionType.DEPOSIT,
-                account.getBalance()
-        );
-        transactionRepository.save(transaction);
-
-        logger.info("Deposit successful - Account: {}, New balance: {}", accountNumber, account.getBalance());
+        var account = accountService.deposit(accountNumber, model.amount());
 
         return ResponseEntity.ok(accountMapper.toAccountDTO(account));
     }
@@ -140,25 +115,7 @@ public class AccountsController {
             @Valid @RequestBody TransactionDTO model) {
         logger.info("Processing withdrawal for account: {}, amount: {}", accountNumber, model.amount());
 
-        var account = accountRepository.findByAccountNumber(accountNumber)
-                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
-
-        if (model.amount().compareTo(account.getBalance().add(account.getOverdraftLimit())) > 0) {
-            throw new InsufficientFundsException(ERROR_INSUFFICIENT_FUNDS);
-        }
-
-        account.withdraw(model.amount());
-        accountRepository.update(account);
-
-        var transaction = new Transaction(
-                accountNumber,
-                model.amount(),
-                Transaction.TransactionType.WITHDRAWAL,
-                account.getBalance()
-        );
-        transactionRepository.save(transaction);
-
-        logger.info("Withdrawal successful - Account: {}, New balance: {}", accountNumber, account.getBalance());
+        var account = accountService.withdraw(accountNumber, model.amount());
 
         return ResponseEntity.ok(accountMapper.toAccountDTO(account));
     }
@@ -174,13 +131,7 @@ public class AccountsController {
             @Valid @RequestBody OverdraftDTO model) {
         logger.info("Setting overdraft limit for account: {}, limit: {}", accountNumber, model.overdraftLimit());
 
-        var account = accountRepository.findByAccountNumber(accountNumber)
-                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
-
-        account.setOverdraftLimit(model.overdraftLimit());
-        accountRepository.update(account);
-
-        logger.info("Overdraft limit updated for account: {}", accountNumber);
+        var account = accountService.setOverdraftLimit(accountNumber, model.overdraftLimit());
 
         return ResponseEntity.ok(accountMapper.toAccountDTO(account));
     }
@@ -198,8 +149,7 @@ public class AccountsController {
             @RequestParam(required = false) Instant toDate) {
         logger.info("Fetching statement for account: {}", accountNumber);
 
-        var account = accountRepository.findByAccountNumber(accountNumber)
-                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
+        var account = accountService.findAccount(accountNumber);
 
         Instant to = toDate != null ? toDate : Instant.now();
         Instant from = fromDate != null ? fromDate : to.minus(30, ChronoUnit.DAYS);

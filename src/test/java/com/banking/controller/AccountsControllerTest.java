@@ -6,7 +6,7 @@ import com.banking.exception.InsufficientFundsException;
 import com.banking.mapper.AccountMapper;
 import com.banking.model.BankAccount;
 import com.banking.model.Transaction;
-import com.banking.repository.BankAccountRepository;
+import com.banking.service.AccountService;
 import com.banking.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,7 +28,7 @@ import static org.mockito.Mockito.*;
 class AccountsControllerTest {
 
     @Mock
-    private BankAccountRepository accountRepository;
+    private AccountService accountService;
 
     @Mock
     private TransactionRepository transactionRepository;
@@ -40,12 +40,12 @@ class AccountsControllerTest {
 
     @BeforeEach
     void setUp() {
-        controller = new AccountsController(accountRepository, transactionRepository, accountMapper);
+        controller = new AccountsController(accountService, transactionRepository, accountMapper);
     }
 
     @Test
     void getAll_ReturnsEmptyList_WhenNoAccounts() {
-        when(accountRepository.findAll()).thenReturn(List.of());
+        when(accountService.findAll()).thenReturn(List.of());
 
         ResponseEntity<List<AccountDTO>> result = controller.getAll();
 
@@ -56,8 +56,8 @@ class AccountsControllerTest {
     @Test
     void create_ValidAccount_ReturnsCreated() {
         CreateAccountDTO model = new CreateAccountDTO("ACC001", new BigDecimal("1000"), new BigDecimal("500"));
-        when(accountRepository.exists("ACC001")).thenReturn(false);
-        doNothing().when(accountRepository).save(any(BankAccount.class));
+        BankAccount account = new BankAccount("ACC001", new BigDecimal("1000"), new BigDecimal("500"));
+        when(accountService.createAccount(anyString(), any(BigDecimal.class), any(BigDecimal.class))).thenReturn(account);
         when(accountMapper.toAccountDTO(any(BankAccount.class))).thenReturn(new AccountDTO("ACC001", new BigDecimal("1000"), new BigDecimal("500")));
 
         ResponseEntity<AccountDTO> result = controller.create(model);
@@ -70,7 +70,8 @@ class AccountsControllerTest {
     @Test
     void create_DuplicateAccount_ReturnsConflict() {
         CreateAccountDTO model = new CreateAccountDTO("ACC001", new BigDecimal("1000"), BigDecimal.ZERO);
-        when(accountRepository.exists("ACC001")).thenReturn(true);
+        when(accountService.createAccount(anyString(), any(BigDecimal.class), any(BigDecimal.class)))
+                .thenThrow(new IllegalStateException("Account number already exists: ACC001"));
 
         ResponseEntity<AccountDTO> result = controller.create(model);
 
@@ -80,7 +81,7 @@ class AccountsControllerTest {
     @Test
     void get_ExistingAccount_ReturnsAccount() {
         BankAccount account = new BankAccount("ACC001", new BigDecimal("500"), BigDecimal.ZERO);
-        when(accountRepository.findByAccountNumber("ACC001")).thenReturn(Optional.of(account));
+        when(accountService.findAccount("ACC001")).thenReturn(account);
         when(accountMapper.toAccountDTO(account)).thenReturn(new AccountDTO("ACC001", new BigDecimal("500"), BigDecimal.ZERO));
 
         ResponseEntity<AccountDTO> result = controller.get("ACC001");
@@ -91,21 +92,16 @@ class AccountsControllerTest {
 
     @Test
     void get_NonExistingAccount_ThrowsException() {
-        when(accountRepository.findByAccountNumber("NONEXISTENT")).thenReturn(Optional.empty());
+        when(accountService.findAccount("NONEXISTENT")).thenThrow(new AccountNotFoundException("Account not found: NONEXISTENT"));
 
         assertThrows(AccountNotFoundException.class, () -> controller.get("NONEXISTENT"));
     }
 
     @Test
     void deposit_ValidAmount_IncreasesBalance() {
-        BankAccount account = new BankAccount("ACC001", new BigDecimal("100"), BigDecimal.ZERO);
-        when(accountRepository.findByAccountNumber("ACC001")).thenReturn(Optional.of(account));
-        doNothing().when(accountRepository).update(any());
-        doNothing().when(transactionRepository).save(any());
-        when(accountMapper.toAccountDTO(any())).thenAnswer(inv -> {
-            BankAccount acc = inv.getArgument(0);
-            return new AccountDTO(acc.getAccountNumber(), acc.getBalance(), acc.getOverdraftLimit());
-        });
+        BankAccount account = new BankAccount("ACC001", new BigDecimal("150"), BigDecimal.ZERO);
+        when(accountService.deposit("ACC001", new BigDecimal("50"))).thenReturn(account);
+        when(accountMapper.toAccountDTO(account)).thenReturn(new AccountDTO("ACC001", new BigDecimal("150"), BigDecimal.ZERO));
 
         ResponseEntity<AccountDTO> result = controller.deposit("ACC001", new TransactionDTO(new BigDecimal("50")));
 
@@ -115,22 +111,17 @@ class AccountsControllerTest {
 
     @Test
     void deposit_NonExistingAccount_ThrowsException() {
-        when(accountRepository.findByAccountNumber("NONEXISTENT")).thenReturn(Optional.empty());
+        when(accountService.deposit("NONEXISTENT", new BigDecimal("50"))).thenThrow(new AccountNotFoundException("Account not found: NONEXISTENT"));
 
         assertThrows(AccountNotFoundException.class, 
-            () -> controller.deposit("NONEXISTENT", new TransactionDTO(new BigDecimal("50"))));
+                () -> controller.deposit("NONEXISTENT", new TransactionDTO(new BigDecimal("50"))));
     }
 
     @Test
     void withdraw_ValidAmount_DecreasesBalance() {
-        BankAccount account = new BankAccount("ACC001", new BigDecimal("100"), BigDecimal.ZERO);
-        when(accountRepository.findByAccountNumber("ACC001")).thenReturn(Optional.of(account));
-        doNothing().when(accountRepository).update(any());
-        doNothing().when(transactionRepository).save(any());
-        when(accountMapper.toAccountDTO(any())).thenAnswer(inv -> {
-            BankAccount acc = inv.getArgument(0);
-            return new AccountDTO(acc.getAccountNumber(), acc.getBalance(), acc.getOverdraftLimit());
-        });
+        BankAccount account = new BankAccount("ACC001", new BigDecimal("70"), BigDecimal.ZERO);
+        when(accountService.withdraw("ACC001", new BigDecimal("30"))).thenReturn(account);
+        when(accountMapper.toAccountDTO(account)).thenReturn(new AccountDTO("ACC001", new BigDecimal("70"), BigDecimal.ZERO));
 
         ResponseEntity<AccountDTO> result = controller.withdraw("ACC001", new TransactionDTO(new BigDecimal("30")));
 
@@ -140,18 +131,16 @@ class AccountsControllerTest {
 
     @Test
     void withdraw_InsufficientFunds_ThrowsException() {
-        BankAccount account = new BankAccount("ACC001", new BigDecimal("100"), BigDecimal.ZERO);
-        when(accountRepository.findByAccountNumber("ACC001")).thenReturn(Optional.of(account));
+        when(accountService.withdraw("ACC001", new BigDecimal("150"))).thenThrow(new InsufficientFundsException("Insufficient funds for withdrawal"));
 
         assertThrows(InsufficientFundsException.class, 
-            () -> controller.withdraw("ACC001", new TransactionDTO(new BigDecimal("150"))));
+                () -> controller.withdraw("ACC001", new TransactionDTO(new BigDecimal("150"))));
     }
 
     @Test
     void setOverdraft_ValidLimit_UpdatesOverdraft() {
-        BankAccount account = new BankAccount("ACC001", new BigDecimal("100"), BigDecimal.ZERO);
-        when(accountRepository.findByAccountNumber("ACC001")).thenReturn(Optional.of(account));
-        doNothing().when(accountRepository).update(any());
+        BankAccount account = new BankAccount("ACC001", new BigDecimal("100"), new BigDecimal("200"));
+        when(accountService.setOverdraftLimit("ACC001", new BigDecimal("200"))).thenReturn(account);
         when(accountMapper.toAccountDTO(any())).thenAnswer(inv -> {
             BankAccount acc = inv.getArgument(0);
             return new AccountDTO(acc.getAccountNumber(), acc.getBalance(), acc.getOverdraftLimit());
@@ -166,7 +155,7 @@ class AccountsControllerTest {
     @Test
     void getStatement_ExistingAccount_ReturnsStatement() {
         BankAccount account = new BankAccount("ACC001", new BigDecimal("150"), BigDecimal.ZERO);
-        when(accountRepository.findByAccountNumber("ACC001")).thenReturn(Optional.of(account));
+        when(accountService.findAccount("ACC001")).thenReturn(account);
         when(transactionRepository.findByAccountNumberInRange(any(), any(), any())).thenReturn(List.of());
 
         ResponseEntity<StatementDTO> result = controller.getStatement("ACC001", null, null);
