@@ -1,11 +1,7 @@
 package com.banking.controller;
 
 import com.banking.dto.*;
-import com.banking.exception.AccountNotFoundException;
-import com.banking.exception.InsufficientFundsException;
 import com.banking.mapper.AccountMapper;
-import com.banking.model.BankAccount;
-import com.banking.model.Transaction;
 import com.banking.repository.TransactionRepository;
 import com.banking.service.AccountService;
 import io.swagger.v3.oas.annotations.Operation;

@@ -17,8 +17,6 @@ import org.springframework.http.ResponseEntity;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Optional;
-
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -39,6 +37,7 @@ class SavingsControllerTest {
         controller = new SavingsController(savingsService, accountMapper);
     }
 
+    @SuppressWarnings("null")
     @Test
     void getAll_ReturnsEmptyList_WhenNoAccounts() {
         when(savingsService.findAll()).thenReturn(List.of());
@@ -49,6 +48,7 @@ class SavingsControllerTest {
         assertTrue(result.getBody().isEmpty());
     }
 
+    @SuppressWarnings("null")
     @Test
     void create_ValidSavingsAccount_ReturnsCreated() {
         CreateSavingsAccountDTO model = new CreateSavingsAccountDTO("SAV001", new BigDecimal("10000"), new BigDecimal("500"));
@@ -74,6 +74,7 @@ class SavingsControllerTest {
         assertEquals(HttpStatus.CONFLICT, result.getStatusCode());
     }
 
+    @SuppressWarnings("null")
     @Test
     void get_ExistingAccount_ReturnsAccount() {
         SavingsAccount account = new SavingsAccount("SAV001", new BigDecimal("10000"), new BigDecimal("500"));
@@ -93,6 +94,7 @@ class SavingsControllerTest {
         assertThrows(AccountNotFoundException.class, () -> controller.get("NONEXISTENT"));
     }
 
+    @SuppressWarnings("null")
     @Test
     void deposit_ValidAmount_IncreasesBalance() {
         SavingsAccount account = new SavingsAccount("SAV001", new BigDecimal("150"), BigDecimal.ZERO);
@@ -113,6 +115,7 @@ class SavingsControllerTest {
                 () -> controller.deposit("SAV001", new TransactionDTO(new BigDecimal("60"))));
     }
 
+    @SuppressWarnings("null")
     @Test
     void withdraw_ValidAmount_DecreasesBalance() {
         SavingsAccount account = new SavingsAccount("SAV001", new BigDecimal("70"), BigDecimal.ZERO);

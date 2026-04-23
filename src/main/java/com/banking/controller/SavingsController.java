@@ -1,11 +1,7 @@
 package com.banking.controller;
 
 import com.banking.dto.*;
-import com.banking.exception.AccountNotFoundException;
-import com.banking.exception.DepositLimitExceededException;
-import com.banking.exception.InsufficientFundsException;
 import com.banking.mapper.AccountMapper;
-import com.banking.model.SavingsAccount;
 import com.banking.service.SavingsService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -18,7 +14,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 @RestController

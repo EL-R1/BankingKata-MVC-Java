@@ -5,7 +5,6 @@ import com.banking.exception.AccountNotFoundException;
 import com.banking.exception.InsufficientFundsException;
 import com.banking.mapper.AccountMapper;
 import com.banking.model.BankAccount;
-import com.banking.model.Transaction;
 import com.banking.service.AccountService;
 import com.banking.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,8 +17,6 @@ import org.springframework.http.ResponseEntity;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Optional;
-
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -43,6 +40,7 @@ class AccountsControllerTest {
         controller = new AccountsController(accountService, transactionRepository, accountMapper);
     }
 
+    @SuppressWarnings("null")
     @Test
     void getAll_ReturnsEmptyList_WhenNoAccounts() {
         when(accountService.findAll()).thenReturn(List.of());
@@ -53,6 +51,7 @@ class AccountsControllerTest {
         assertTrue(result.getBody().isEmpty());
     }
 
+    @SuppressWarnings("null")
     @Test
     void create_ValidAccount_ReturnsCreated() {
         CreateAccountDTO model = new CreateAccountDTO("ACC001", new BigDecimal("1000"), new BigDecimal("500"));
@@ -78,6 +77,7 @@ class AccountsControllerTest {
         assertEquals(HttpStatus.CONFLICT, result.getStatusCode());
     }
 
+    @SuppressWarnings("null")
     @Test
     void get_ExistingAccount_ReturnsAccount() {
         BankAccount account = new BankAccount("ACC001", new BigDecimal("500"), BigDecimal.ZERO);
@@ -97,6 +97,7 @@ class AccountsControllerTest {
         assertThrows(AccountNotFoundException.class, () -> controller.get("NONEXISTENT"));
     }
 
+    @SuppressWarnings("null")
     @Test
     void deposit_ValidAmount_IncreasesBalance() {
         BankAccount account = new BankAccount("ACC001", new BigDecimal("150"), BigDecimal.ZERO);
@@ -117,6 +118,7 @@ class AccountsControllerTest {
                 () -> controller.deposit("NONEXISTENT", new TransactionDTO(new BigDecimal("50"))));
     }
 
+    @SuppressWarnings("null")
     @Test
     void withdraw_ValidAmount_DecreasesBalance() {
         BankAccount account = new BankAccount("ACC001", new BigDecimal("70"), BigDecimal.ZERO);
@@ -137,6 +139,7 @@ class AccountsControllerTest {
                 () -> controller.withdraw("ACC001", new TransactionDTO(new BigDecimal("150"))));
     }
 
+    @SuppressWarnings("null")
     @Test
     void setOverdraft_ValidLimit_UpdatesOverdraft() {
         BankAccount account = new BankAccount("ACC001", new BigDecimal("100"), new BigDecimal("200"));
@@ -152,6 +155,7 @@ class AccountsControllerTest {
         assertEquals(new BigDecimal("200"), result.getBody().overdraftLimit());
     }
 
+    @SuppressWarnings("null")
     @Test
     void getStatement_ExistingAccount_ReturnsStatement() {
         BankAccount account = new BankAccount("ACC001", new BigDecimal("150"), BigDecimal.ZERO);

@@ -1,6 +1,5 @@
 package com.banking.service;
 
-import com.banking.dto.*;
 import com.banking.exception.AccountNotFoundException;
 import com.banking.exception.DepositLimitExceededException;
 import com.banking.exception.InsufficientFundsException;
@@ -14,19 +13,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-
 @Service
 public class SavingsService {
 
     private static final Logger logger = LoggerFactory.getLogger(SavingsService.class);
 
     private final SavingsAccountRepository accountRepository;
-    private final AccountMapper accountMapper;
-
     public SavingsService(SavingsAccountRepository accountRepository, AccountMapper accountMapper) {
         this.accountRepository = accountRepository;
-        this.accountMapper = accountMapper;
     }
 
     @Transactional(readOnly = true)

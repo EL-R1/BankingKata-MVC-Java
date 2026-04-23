@@ -1,6 +1,5 @@
 package com.banking.service;
 
-import com.banking.dto.*;
 import com.banking.exception.AccountNotFoundException;
 import com.banking.exception.InsufficientFundsException;
 import com.banking.mapper.AccountMapper;
@@ -22,14 +21,11 @@ public class AccountService {
 
     private final BankAccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
-    private final AccountMapper accountMapper;
-
     public AccountService(BankAccountRepository accountRepository,
                           TransactionRepository transactionRepository,
                           AccountMapper accountMapper) {
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
-        this.accountMapper = accountMapper;
     }
 
     @Transactional(readOnly = true)
